@@ -1,9 +1,9 @@
 import asyncio
-import random
 import json
 import secrets
 from collections import Counter
 from datetime import datetime
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -24,7 +24,43 @@ STATUS_EMOJIS = {
 
 TOKEN = "8803174834:AAGVi-kTgn4RGx1WpcGJlkiTQJhILKGz89o"
 
+USERS_FILE = "users.json"
 users = {}
+
+
+def load_users():
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {int(k): v for k, v in data.items()}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_users():
+    global users
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+
+def get_or_create_user(from_user):
+    global users
+    user_id = from_user.id
+    if user_id in users:
+        return users[user_id]
+    user = {
+        "id": user_id,
+        "name": from_user.username if from_user.username else f"user_{user_id}",
+        "score": 0,
+        "tasks": [],
+        "current_task": None,
+        "last_bonus": None,
+        "selected_categories": [],
+        "hint_index": 0
+    }
+    users[user_id] = user
+    save_users()
+    return user
 
 
 def load_tasks():
@@ -58,6 +94,7 @@ def load_tasks():
         print("Ошибка кодировки. Попробуйте пересохранить файл в UTF-8.")
         return []
 
+
 TASKS = load_tasks()
 
 
@@ -67,23 +104,35 @@ def get_task_category(task):
     if isinstance(task, str) and "|" in task:
         return task.split("|", 1)[0].strip() or "Без категории"
     if isinstance(task, int):
-        task = next((item for item in TASKS if isinstance(item, dict) and item.get("id") == task), None)
-        if task:
-            return task.get("category") or "Без категории"
+        task_obj = next((item for item in TASKS if isinstance(item, dict) and item.get("id") == task), None)
+        if task_obj:
+            return task_obj.get("category") or "Без категории"
     return "Без категории"
 
 
-def get_today_task():
-    if not TASKS:
+def get_all_categories():
+    cats = set()
+    for task in TASKS:
+        if isinstance(task, dict) and "category" in task:
+            cats.add(task["category"])
+    return sorted(cats)
+
+
+def get_task_for_user(user):
+    selected = user.get("selected_categories", [])
+    if selected:
+        available = [t for t in TASKS if isinstance(t, dict) and t.get("category") in selected]
+    else:
+        available = [t for t in TASKS if isinstance(t, dict)]
+    if not available:
         return None
     day = datetime.now().day
-    return TASKS[(day - 1) % len(TASKS)]
+    return available[(day - 1) % len(available)]
 
 
 def format_task(task):
     if not isinstance(task, dict):
         return f"📝 {task}"
-
     category_emoji = CATEGORY_EMOJIS.get(task.get("category", ""), CATEGORY_EMOJIS["default"])
     difficulty_emoji = DIFFICULTY_EMOJIS.get(task.get("difficulty", 1), "🟢")
     difficulty_name = DIFFICULTY_NAMES.get(task.get("difficulty", 1), "Средне")
@@ -144,106 +193,15 @@ def format_task_history(history):
     text = "📜 *История выполненных заданий:*\n\n"
     for task in history[-10:]:
         if isinstance(task, dict):
-            task = task.get("text", "Задание")
+            ttext = task.get("text", "Задание")
         elif isinstance(task, int):
             saved_task = next((item for item in TASKS if isinstance(item, dict) and item.get("id") == task), None)
-            task = saved_task.get("text", f"Задание #{task}") if saved_task else f"Задание #{task}"
-        text += f"• {task}\n"
+            ttext = saved_task.get("text", f"Задание #{task}") if saved_task else f"Задание #{task}"
+        else:
+            ttext = str(task)
+        text += f"• {ttext}\n"
     return text
 
-
-def get_main_keyboard():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📝 Задание дня", callback_data="get_task"),
-            InlineKeyboardButton(text="💡 Подсказка", callback_data="hint")
-        ],
-        [
-            InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
-            InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard")
-        ],
-        [
-            InlineKeyboardButton(text="🎁 Бонус", callback_data="daily_bonus"),
-            InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
-        ]
-    ])
-    return keyboard
-
-
-async def cmd_start(message: types.Message):
-    user_id = message.from_user.id
-    user = users.get(user_id)
-    if not user:
-        user = {
-            "id": user_id,
-            "name": message.from_user.username if message.from_user.username else f"user_{user_id}",
-            "score": 0,
-            "tasks": [],
-            "current_task": None,
-            "last_bonus": None,
-            "selected_categories": []
-        }
-        users[user_id] = user
-        await message.answer(
-            f"🎉 *Добро пожаловать в TaskBot!*\n\n"
-            f"👋 Привет, {user['name']}!\n"
-            f"Я помогу тебе развиваться с помощью ежедневных заданий.\n\n"
-            f"🔹 Выполняй задания, получай очки и повышай уровень!\n"
-            f"🔹 Используй кнопки ниже для навигации.",
-            reply_markup=get_main_keyboard(),
-            parse_mode="Markdown"
-        )
-    today_task = get_today_task()
-    if today_task:
-        user["current_task"] = today_task
-        user["hint_index"] = 0
-        await message.answer(
-            f"{STATUS_EMOJIS['info']} *Твое задание на сегодня:*\n\n"
-            f"{format_task(today_task)}",
-            reply_markup=get_main_keyboard(),
-            parse_mode="Markdown"
-        )
-    else:
-        await message.answer(
-            "Сегодня для тебя нет задания. Проверьте taskbot.txt!",
-            reply_markup=get_main_keyboard()
-        )
-
-
-async def cmd_score(message: types.Message):
-    user_id = message.from_user.id
-    user = users.get(user_id)
-    if not user:
-        await message.answer(
-            "❌ Вы не зарегистрированы.\n"
-            "Используйте /start для начала!",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    await message.answer(
-        format_user_stats(user),
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard()
-    )
-
-
-async def cmd_history_tasks(message: types.Message):
-    user = users.get(message.from_user.id)
-    if not user:
-        await message.answer("❌ Используйте /start для регистрации!")
-        return
-    history = user.get("tasks", [])
-    if not history:
-        await message.answer("📭 История выполненных заданий пока пуста.")
-        return
-    await message.answer(format_task_history(history), parse_mode="Markdown", reply_markup=get_main_keyboard())
-
-def get_all_categories():
-    categories = set()
-    for task in TASKS:
-        if isinstance(task, dict) and "category" in task:
-            categories.add(task["category"])
-    return list(sorted(categories))
 
 def categories_keyboard(user_categories):
     all_cats = get_all_categories()
@@ -259,47 +217,88 @@ def categories_keyboard(user_categories):
     keyboard.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="cat_save")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-async def categories_callback(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user = users.get(user_id)
-    if not user:
-        await callback.answer("Сначала зарегистрируйтесь через /start", show_alert=True)
-        return
 
-    data = callback.data
-    if data == "cat_save":
-        await callback.message.edit_text(
-            "✅ Настройки категорий сохранены!",
+def get_main_keyboard():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📝 Задание дня", callback_data="get_task"),
+            InlineKeyboardButton(text="💡 Подсказка", callback_data="hint")
+        ],
+        [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
+            InlineKeyboardButton(text="🏆 Рейтинг", callback_data="leaderboard")
+        ],
+        [
+            InlineKeyboardButton(text="🎁 Бонус", callback_data="daily_bonus"),
+            InlineKeyboardButton(text="📂 Категории", callback_data="show_categories")
+        ],
+        [
+            InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
+        ]
+    ])
+    return keyboard
+
+
+async def cmd_start(message: types.Message):
+    user = get_or_create_user(message.from_user)
+    await message.answer(
+        f"🎉 *Добро пожаловать в TaskBot!*\n\n"
+        f"👋 Привет, {user['name']}!\n"
+        f"Я помогу тебе развиваться с помощью ежедневных заданий.\n\n"
+        f"🔹 Выполняй задания, получай очки и повышай уровень!\n"
+        f"🔹 Используй кнопки ниже для навигации.",
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown"
+    )
+    today_task = get_task_for_user(user)
+    if today_task:
+        user["current_task"] = today_task
+        user["hint_index"] = 0
+        save_users()
+        await message.answer(
+            f"{STATUS_EMOJIS['info']} *Твое задание на сегодня:*\n\n"
+            f"{format_task(today_task)}",
+            reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer(
+            "😕 В выбранных категориях нет заданий.\n"
+            "Измени настройки категорий или добавь новые задания.",
             reply_markup=get_main_keyboard()
         )
-        await callback.answer()
-        return
 
-    cat = data[4:]
-    if "selected_categories" not in user:
-        user["selected_categories"] = []
-    if cat in user["selected_categories"]:
-        user["selected_categories"].remove(cat)
-    else:
-        user["selected_categories"].append(cat)
 
-    await callback.message.edit_reply_markup(
-        reply_markup=categories_keyboard(user["selected_categories"])
+async def cmd_score(message: types.Message):
+    user = get_or_create_user(message.from_user)
+    await message.answer(
+        format_user_stats(user),
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
     )
-    await callback.answer()
+
+
+async def cmd_history_tasks(message: types.Message):
+    user = get_or_create_user(message.from_user)
+    history = user.get("tasks", [])
+    if not history:
+        await message.answer("📭 История выполненных заданий пока пуста.", reply_markup=get_main_keyboard())
+        return
+    await message.answer(format_task_history(history), parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
 async def cmd_leaderboard(message: types.Message):
+    global users
     if not users:
-        await message.answer("😕 Пока нет пользователей в рейтинге!")
+        await message.answer("😕 Пока нет пользователей в рейтинге!", reply_markup=get_main_keyboard())
         return
     sorted_users = sorted(users.values(), key=lambda x: x.get("score", 0), reverse=True)[:10]
     text = f"{STATUS_EMOJIS['trophy']} *Топ пользователей*\n\n"
     medals = ["🥇", "🥈", "🥉"]
-    for i, user in enumerate(sorted_users, 1):
+    for i, user_item in enumerate(sorted_users, 1):
         medal = medals[i - 1] if i <= 3 else f"{i}."
-        name = user.get("name", "Аноним")
-        score = user.get("score", 0)
+        name = user_item.get("name", "Аноним")
+        score = user_item.get("score", 0)
         if score >= 200:
             level_emoji = "👑"
         elif score >= 100:
@@ -319,16 +318,14 @@ async def cmd_leaderboard(message: types.Message):
 
 
 async def cmd_hint(message: types.Message):
-    user_id = message.from_user.id
-    user = users.get(user_id)
-    if not user or not user.get("current_task"):
+    user = get_or_create_user(message.from_user)
+    if not user.get("current_task"):
         await message.answer(
             "💡 У тебя нет активного задания!\n"
             "Используй /start чтобы получить задание.",
             reply_markup=get_main_keyboard()
         )
         return
-
     current_task = user["current_task"]
     if isinstance(current_task, dict) and "hints" in current_task:
         hints = current_task["hints"]
@@ -341,6 +338,7 @@ async def cmd_hint(message: types.Message):
                 reply_markup=get_main_keyboard()
             )
             user["hint_index"] = hint_index + 1
+            save_users()
         else:
             await message.answer(
                 "😅 Подсказки закончились!\n"
@@ -356,11 +354,7 @@ async def cmd_hint(message: types.Message):
 
 
 async def cmd_daily_bonus(message: types.Message):
-    user_id = message.from_user.id
-    user = users.get(user_id)
-    if not user:
-        await message.answer("❌ Используйте /start для регистрации!")
-        return
+    user = get_or_create_user(message.from_user)
     today = datetime.now().date()
     last_bonus = user.get("last_bonus")
     if last_bonus and datetime.strptime(last_bonus, '%Y-%m-%d').date() == today:
@@ -371,18 +365,17 @@ async def cmd_daily_bonus(message: types.Message):
             reply_markup=get_main_keyboard()
         )
         return
-
     bonus = secrets.randbelow(11) + 5
     user["score"] += bonus
     user["last_bonus"] = today.isoformat()
+    save_users()
+    level_msg = ""
     if user["score"] >= 50 and user["score"] - bonus < 50:
         level_msg = "\n\n🎉 *Поздравляю! Ты достиг уровня* 🔍 *Исследователь!*"
     elif user["score"] >= 100 and user["score"] - bonus < 100:
         level_msg = "\n\n🎉 *Поздравляю! Ты достиг уровня* ⭐ *Мастер!*"
     elif user["score"] >= 200 and user["score"] - bonus < 200:
         level_msg = "\n\n👑 *Поздравляю! Ты достиг уровня* 👑 *Легенда!*"
-    else:
-        level_msg = ""
     await message.answer(
         f"🎁 *Ежедневный бонус!*\n\n"
         f"➕ Ты получил {bonus} очков!\n"
@@ -408,6 +401,7 @@ async def cmd_help(message: types.Message):
 📊 Статистика — Посмотреть свой прогресс
 🏆 Рейтинг — Топ пользователей
 🎁 Бонус — Получить ежедневный бонус
+📂 Категории — Выбрать интересующие категории
 
 *Как выполнять задания:*
 1. Получи задание через /start
@@ -426,16 +420,7 @@ async def cmd_help(message: types.Message):
 
 
 async def handle_answer(message: types.Message):
-    user_id = message.from_user.id
-    user = users.get(user_id)
-    if not user:
-        await message.answer(
-            "❌ Вы не зарегистрированы.\n"
-            "Используйте /start для начала!",
-            reply_markup=get_main_keyboard()
-        )
-        return
-
+    user = get_or_create_user(message.from_user)
     current_task = user.get("current_task")
     if not current_task:
         await message.answer(
@@ -444,19 +429,17 @@ async def handle_answer(message: types.Message):
             reply_markup=get_main_keyboard()
         )
         return
-
     answer_text = message.text.lower().strip()
-    
     if isinstance(current_task, dict) and "answer" in current_task:
         correct_answers = [ans.lower() for ans in current_task["answer"]]
-        
         if any(answer_text == ans or ans in answer_text for ans in correct_answers):
             reward = current_task.get("reward", 5)
-            old_score = user["score"]  # Сохраняем старый счет
+            old_score = user["score"]
             user["score"] += reward
             user["tasks"].append(current_task.get("id", current_task))
             user["current_task"] = None
             user["hint_index"] = 0
+            save_users()
             level_up = ""
             if user["score"] >= 200 and old_score < 200:
                 level_up = "\n\n👑 *НОВЫЙ УРОВЕНЬ: ЛЕГЕНДА!* 👑"
@@ -471,13 +454,11 @@ async def handle_answer(message: types.Message):
             if explanation:
                 response += f"\n📖 *Объяснение:* {explanation}\n"
             response += level_up
-            
             await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
         else:
             hints = current_task.get("hints", [])
             used_hints = user.get("hint_index", 0)
             remaining_hints = len(hints) - used_hints
-            
             if remaining_hints <= 0 and hints:
                 response = f"{STATUS_EMOJIS['warning']} *Неправильно!*\n\n"
                 response += "💡 Вот правильный ответ:\n"
@@ -485,6 +466,7 @@ async def handle_answer(message: types.Message):
                 response += "Попробуй следующее задание через /start"
                 user["current_task"] = None
                 user["hint_index"] = 0
+                save_users()
             else:
                 response = f"{STATUS_EMOJIS['error']} *Неправильно!*\n\n"
                 if remaining_hints > 0:
@@ -493,14 +475,13 @@ async def handle_answer(message: types.Message):
                 else:
                     response += "💡 Подсказки закончились!\n"
                     response += "Попробуй еще раз или используй /start для нового задания"
-            
             await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
     else:
         if "выполнено" in answer_text or "готово" in answer_text or "сделал" in answer_text:
             user["score"] += 1
             user["tasks"].append(current_task)
             user["current_task"] = None
-            
+            save_users()
             await message.answer(
                 f"{STATUS_EMOJIS['success']} *Поздравляю, {user['name']}!*\n\n"
                 f"Ты выполнил задание! 🎉\n"
@@ -521,6 +502,41 @@ async def handle_answer(message: types.Message):
             )
 
 
+async def show_categories(callback: types.CallbackQuery):
+    user = get_or_create_user(callback.from_user)
+    await callback.message.edit_text(
+        "📂 *Выберите категории заданий*\n"
+        "Нажмите на категорию, чтобы включить/отключить её.",
+        reply_markup=categories_keyboard(user.get("selected_categories", [])),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+async def categories_callback(callback: types.CallbackQuery):
+    user = get_or_create_user(callback.from_user)
+    data = callback.data
+    if data == "cat_save":
+        await callback.message.edit_text(
+            "✅ Настройки категорий сохранены!",
+            reply_markup=get_main_keyboard()
+        )
+        await callback.answer()
+        return
+    cat = data[4:]
+    if "selected_categories" not in user:
+        user["selected_categories"] = []
+    if cat in user["selected_categories"]:
+        user["selected_categories"].remove(cat)
+    else:
+        user["selected_categories"].append(cat)
+    save_users()
+    await callback.message.edit_reply_markup(
+        reply_markup=categories_keyboard(user["selected_categories"])
+    )
+    await callback.answer()
+
+
 async def handle_callback(callback: types.CallbackQuery):
     await callback.answer()
     if callback.data == "get_task":
@@ -535,11 +551,15 @@ async def handle_callback(callback: types.CallbackQuery):
         await cmd_daily_bonus(callback.message)
     elif callback.data == "help":
         await cmd_help(callback.message)
+    elif callback.data == "show_categories":
+        await show_categories(callback)
     elif callback.data.startswith("cat_"):
         await categories_callback(callback)
 
 
 async def main():
+    global users
+    users = load_users()
     bot = Bot(token=TOKEN)
     dp = Dispatcher()
     dp.message.register(cmd_start, Command("start"))

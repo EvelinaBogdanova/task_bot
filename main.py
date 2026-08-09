@@ -2,12 +2,12 @@ import asyncio
 import random
 import json
 import secrets
+from collections import Counter
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Эмодзи для категорий, сложностей, статусов
 CATEGORY_EMOJIS = {
     "riddles": "🧩",
     "logic": "🧠",
@@ -59,6 +59,18 @@ def load_tasks():
         return []
 
 TASKS = load_tasks()
+
+
+def get_task_category(task):
+    if isinstance(task, dict):
+        return task.get("category") or "Без категории"
+    if isinstance(task, str) and "|" in task:
+        return task.split("|", 1)[0].strip() or "Без категории"
+    if isinstance(task, int):
+        task = next((item for item in TASKS if isinstance(item, dict) and item.get("id") == task), None)
+        if task:
+            return task.get("category") or "Без категории"
+    return "Без категории"
 
 
 def get_today_task():
@@ -114,12 +126,29 @@ def format_user_stats(user):
     text += f"📊 *Уровень:* {level}\n"
     text += f"⭐ *Очки:* {score}\n"
     text += f"📝 *Выполнено заданий:* {tasks_count}\n"
+    category_counts = Counter(get_task_category(task) for task in user.get("tasks", []))
+    if category_counts:
+        text += "\n📊 *По категориям:*\n"
+        for category, count in sorted(category_counts.items(), key=lambda item: (-item[1], item[0])):
+            text += f"• {category}: {count}\n"
     if score < 50:
         next_level = 50
         progress = int((score / next_level) * 20)
         bar = "█" * progress + "░" * (20 - progress)
         text += "\n📈 *Прогресс до следующего уровня:*\n"
         text += f"`{bar}` {score}/{next_level}\n"
+    return text
+
+
+def format_task_history(history):
+    text = "📜 *История выполненных заданий:*\n\n"
+    for task in history[-10:]:
+        if isinstance(task, dict):
+            task = task.get("text", "Задание")
+        elif isinstance(task, int):
+            saved_task = next((item for item in TASKS if isinstance(item, dict) and item.get("id") == task), None)
+            task = saved_task.get("text", f"Задание #{task}") if saved_task else f"Задание #{task}"
+        text += f"• {task}\n"
     return text
 
 
@@ -194,6 +223,18 @@ async def cmd_score(message: types.Message):
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
     )
+
+
+async def cmd_history_tasks(message: types.Message):
+    user = users.get(message.from_user.id)
+    if not user:
+        await message.answer("❌ Используйте /start для регистрации!")
+        return
+    history = user.get("tasks", [])
+    if not history:
+        await message.answer("📭 История выполненных заданий пока пуста.")
+        return
+    await message.answer(format_task_history(history), parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
 async def cmd_leaderboard(message: types.Message):
@@ -306,6 +347,7 @@ async def cmd_help(message: types.Message):
 *Основные команды:*
 /start — 🎯 Получить задание дня
 /score — 📊 Посмотреть статистику
+/history — 📜 Посмотреть историю заданий
 /help — ℹ️ Показать эту справку
 
 *Кнопки быстрого доступа:*
@@ -426,17 +468,6 @@ async def handle_answer(message: types.Message):
                 reply_markup=get_main_keyboard()
             )
 
-            async def cmd_history_tasks():
-                user_id = message.from_user.id
-                history = [task for task in user_stats[user_id] if tasks['date'] >= datetime.now()]
-
-                if not history:
-                    await message.answer('there ara no tasks')
-                    return
-
-                text = "the history of completed tasks: n/ n/"
-
-
 async def handle_callback(callback: types.CallbackQuery):
     await callback.answer()
     if callback.data == "get_task":
@@ -458,6 +489,7 @@ async def main():
     dp = Dispatcher()
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_score, Command("score"))
+    dp.message.register(cmd_history_tasks, Command("history"))
     dp.message.register(cmd_help, Command("help"))
     dp.message.register(cmd_leaderboard, Command("leaderboard"))
     dp.message.register(cmd_daily_bonus, Command("bonus"))

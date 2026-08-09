@@ -426,6 +426,17 @@ async def handle_answer(message: types.Message):
                 reply_markup=get_main_keyboard()
             )
 
+            async def cmd_history_tasks():
+                user_id = message.from_user.id
+                history = [task for task in user_stats[user_id] if tasks['date'] >= datetime.now()]
+
+                if not history:
+                    await message.answer('there ara no tasks')
+                    return
+
+                text = "the history of completed tasks: n/ n/"
+
+
 async def handle_callback(callback: types.CallbackQuery):
     await callback.answer()
     if callback.data == "get_task":

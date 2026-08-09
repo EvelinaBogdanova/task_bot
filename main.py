@@ -180,7 +180,8 @@ async def cmd_start(message: types.Message):
             "score": 0,
             "tasks": [],
             "current_task": None,
-            "last_bonus": None
+            "last_bonus": None,
+            "selected_categories": []
         }
         users[user_id] = user
         await message.answer(
@@ -195,6 +196,7 @@ async def cmd_start(message: types.Message):
     today_task = get_today_task()
     if today_task:
         user["current_task"] = today_task
+        user["hint_index"] = 0
         await message.answer(
             f"{STATUS_EMOJIS['info']} *Твое задание на сегодня:*\n\n"
             f"{format_task(today_task)}",
@@ -236,12 +238,62 @@ async def cmd_history_tasks(message: types.Message):
         return
     await message.answer(format_task_history(history), parse_mode="Markdown", reply_markup=get_main_keyboard())
 
+def get_all_categories():
+    categories = set()
+    for task in TASKS:
+        if isinstance(task, dict) and "category" in task:
+            categories.add(task["category"])
+    return list(sorted(categories))
+
+def categories_keyboard(user_categories):
+    all_cats = get_all_categories()
+    keyboard = []
+    for cat in all_cats:
+        checked = "✅" if cat in user_categories else "⬜"
+        emoji = CATEGORY_EMOJIS.get(cat, "📂")
+        btn = InlineKeyboardButton(
+            text=f"{checked} {emoji} {cat.capitalize()}",
+            callback_data=f"cat_{cat}"
+        )
+        keyboard.append([btn])
+    keyboard.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="cat_save")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+async def categories_callback(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = users.get(user_id)
+    if not user:
+        await callback.answer("Сначала зарегистрируйтесь через /start", show_alert=True)
+        return
+
+    data = callback.data
+    if data == "cat_save":
+        await callback.message.edit_text(
+            "✅ Настройки категорий сохранены!",
+            reply_markup=get_main_keyboard()
+        )
+        await callback.answer()
+        return
+
+    cat = data[4:]
+    if "selected_categories" not in user:
+        user["selected_categories"] = []
+    if cat in user["selected_categories"]:
+        user["selected_categories"].remove(cat)
+    else:
+        user["selected_categories"].append(cat)
+
+    await callback.message.edit_reply_markup(
+        reply_markup=categories_keyboard(user["selected_categories"])
+    )
+    await callback.answer()
+
 
 async def cmd_leaderboard(message: types.Message):
     if not users:
         await message.answer("😕 Пока нет пользователей в рейтинге!")
         return
-    sorted_users = sorted(users.values(), key=lambda x: x["score"], reverse=True)[:10]
+    sorted_users = sorted(users.values(), key=lambda x: x.get("score", 0), reverse=True)[:10]
     text = f"{STATUS_EMOJIS['trophy']} *Топ пользователей*\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, user in enumerate(sorted_users, 1):
@@ -259,8 +311,8 @@ async def cmd_leaderboard(message: types.Message):
         text += f"{medal} {level_emoji} *{name}* — {score} ⭐\n"
     user_id = message.from_user.id
     if user_id in users:
-        user_score = users[user_id]["score"]
-        position = sum(1 for u in users.values() if u["score"] > user_score) + 1
+        user_score = users[user_id].get("score", 0)
+        position = sum(1 for u in users.values() if u.get("score", 0) > user_score) + 1
         text += f"\n📊 *Твоя позиция:* {position} место"
         text += f"\n⭐ *Твои очки:* {user_score}"
     await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
@@ -468,6 +520,7 @@ async def handle_answer(message: types.Message):
                 reply_markup=get_main_keyboard()
             )
 
+
 async def handle_callback(callback: types.CallbackQuery):
     await callback.answer()
     if callback.data == "get_task":
@@ -482,6 +535,8 @@ async def handle_callback(callback: types.CallbackQuery):
         await cmd_daily_bonus(callback.message)
     elif callback.data == "help":
         await cmd_help(callback.message)
+    elif callback.data.startswith("cat_"):
+        await categories_callback(callback)
 
 
 async def main():

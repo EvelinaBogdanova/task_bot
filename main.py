@@ -8,6 +8,14 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# Список всех доступных категорий (вместо извлечения из заданий)
+ALL_CATEGORIES = [
+    "Экология", "Социальное", "Финансы",
+    "Творчество", "Работа", "Ментальное",
+    "Обучение", "Здоровье", "Технологии",
+    "Спорт", "Быт", "Досуг"
+]
+
 # Вспомогательные функции для форматирования ответов
 def get_level_up_msg(new_score: int, old_score: int) -> str:
     if new_score >= 200 > old_score:
@@ -628,16 +636,38 @@ async def handle_string_task(user, current_task, answer_text, message):
         )
 
 
+def categories_keyboard(user_categories):
+    keyboard = []
+    row = []
+    for i, cat in enumerate(ALL_CATEGORIES):   # используем ваш глобальный список
+        checked = "✅" if cat in user_categories else "⬜"
+        emoji = CATEGORY_EMOJIS.get(cat, "📂")
+        btn = InlineKeyboardButton(
+            text=f"{checked} {emoji} {cat}",
+            callback_data=f"cat_{cat}"
+        )
+        row.append(btn)
+        # Каждые 3 кнопки добавляем как строку
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    # Добавляем оставшиеся кнопки, если есть
+    if row:
+        keyboard.append(row)
+    # Кнопка "Сохранить" на отдельной строке
+    keyboard.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="cat_save")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 async def show_categories(callback: types.CallbackQuery):
     user = get_or_create_user(callback.from_user)
+    selected = user.get("selected_categories", [])
     await callback.message.edit_text(
         "📂 *Выберите категории заданий*\n"
         "Нажмите на категорию, чтобы включить/отключить её.",
-        reply_markup=categories_keyboard(user.get("selected_categories", [])),
+        reply_markup=categories_keyboard(selected),
         parse_mode="Markdown"
     )
     await callback.answer()
-
 
 async def categories_callback(callback: types.CallbackQuery):
     user = get_or_create_user(callback.from_user)

@@ -6,7 +6,10 @@
     "tasks": [],
     "current_task": null,
     "last_bonus": null,
-    "selected_categories": [],
+    "selected_categories": [
+      "Творчество",
+      "Социальное"
+    ],
     "hint_index": 0
   },
   "8803174834": {

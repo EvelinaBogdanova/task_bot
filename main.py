@@ -8,44 +8,38 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Список всех доступных категорий (вместо извлечения из заданий)
-ALL_CATEGORIES = [
-    "Экология", "Социальное", "Финансы",
-    "Творчество", "Работа", "Ментальное",
-    "Обучение", "Здоровье", "Технологии",
-    "Спорт", "Быт", "Досуг"
-]
 
-# Вспомогательные функции для форматирования ответов
-def get_level_up_msg(new_score: int, old_score: int) -> str:
-    if new_score >= 200 > old_score:
-        return "\n\n👑 *НОВЫЙ УРОВЕНЬ: ЛЕГЕНДА!* 👑"
-    elif new_score >= 100 > old_score:
-        return "\n\n⭐ *НОВЫЙ УРОВЕНЬ: МАСТЕР!* ⭐"
-    elif new_score >= 50 > old_score:
-        return "\n\n🔍 *НОВЫЙ УРОВЕНЬ: ИССЛЕДОВАТЕЛЬ!* 🔍"
-    return ""
+# ---------- КОНСТАНТЫ КАТЕГОРИЙ ----------
+CATEGORY_SPORT = "Спорт"
 
-def compose_success_response(reward: int, user: dict, explanation: str, level_up: str) -> str:
-    res = f"{STATUS_EMOJIS['success']} *Отлично! Правильный ответ!*\n\n"
-    res += f"➕ +{reward} очков\n"
-    res += f"⭐ Всего очков: {user['score']}\n"
-    if explanation:
-        res += f"\n📖 *Объяснение:* {explanation}\n"
-    res += level_up
-    return res
 
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 def escape_markdown(text: str) -> str:
     """Экранирует спецсимволы для Telegram Markdown (версия 1)."""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return ''.join(f'\\{c}' if c in escape_chars else c for c in text)
 
+
+# ---------- ЭМОДЗИ И СЛОВАРИ ----------
 CATEGORY_EMOJIS = {
+    CATEGORY_SPORT: "🏃",
+    "Здоровье": "💪",
+    "Обучение": "📚",
+    "Работа": "💼",
+    "Творчество": "🎨",
+    "Социальное": "🤝",
+    "Быт": "🏠",
+    "Финансы": "💰",
+    "Ментальное": "🧘",
+    "Технологии": "⚙️",
+    "Экология": "🌍",
+    "Досуг": "🎮",
+    "default": "📝",
     "riddles": "🧩",
     "logic": "🧠",
-    "javascript": "💻",
-    "default": "📝"
+    "javascript": "💻"
 }
+
 DIFFICULTY_EMOJIS = {1: "🟢", 2: "🟡", 3: "🔴"}
 DIFFICULTY_NAMES = {1: "Легко", 2: "Средне", 3: "Сложно"}
 STATUS_EMOJIS = {
@@ -55,11 +49,11 @@ STATUS_EMOJIS = {
 }
 
 TOKEN = "8803174834:AAGVi-kTgn4RGx1WpcGJlkiTQJhILKGz89o"
-
 USERS_FILE = "users.json"
 users = {}
 
 
+# ---------- РАБОТА С ПОЛЬЗОВАТЕЛЯМИ ----------
 def load_users():
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
@@ -95,43 +89,77 @@ def get_or_create_user(from_user):
     return user
 
 
+# ---------- ЗАГРУЗКА ЗАДАНИЙ ----------
+def generate_default_tasks():
+    """Возвращает список тестовых заданий на случай отсутствия файла."""
+    return [
+        {"id": 1, "category": CATEGORY_SPORT, "difficulty": 1,
+         "text": "Сделать 20 приседаний",
+         "answer": [], "hints": [], "explanation": "", "reward": 5, "time_limit": 90},
+        {"id": 2, "category": CATEGORY_SPORT, "difficulty": 2,
+         "text": "Пробежать 3 км",
+         "answer": [], "hints": [], "explanation": "", "reward": 7, "time_limit": 120}
+    ]
+
+
 def load_tasks():
     try:
         with open("taskbot.txt", "r", encoding="utf-8") as file:
-            content = file.read()
-        try:
-            data = json.loads(content)
-            if isinstance(data, list):
-                return data
-        except json.JSONDecodeError:
-            pass
-        return [line.strip() for line in content.splitlines() if line.strip() and not line.startswith('=')]
+            lines = file.readlines()
     except FileNotFoundError:
         print("Файл taskbot.txt не найден. Создаю тестовые задания.")
-        return [
-            {"id": 1, "category": "riddles", "difficulty": 1,
-             "text": "Висит груша — нельзя скушать.",
-             "answer": ["лампочка", "лампа"],
-             "hints": ["Светит, но не солнце", "Вкручивают в потолок"],
-             "explanation": "Лампочка формой похожа на грушу, горит, а не естся.",
-             "time_limit": 120, "reward": 5},
-            {"id": 2, "category": "logic", "difficulty": 2,
-             "text": "Что можно приготовить, но нельзя съесть?",
-             "answer": ["уроки", "домашнее задание"],
-             "hints": ["Школьники этим заняты", "Задают в дневник"],
-             "explanation": "Уроки готовят в учебном смысле, а не в кулинарном.",
-             "time_limit": 150, "reward": 8},
-        ]
+        return generate_default_tasks()
     except UnicodeDecodeError:
         print("Ошибка кодировки. Попробуйте пересохранить файл в UTF-8.")
-        return []
+        return generate_default_tasks()
+
+    tasks = []
+    difficulty_map = {
+        "легко": 1,
+        "средне": 2,
+        "сложно": 3,
+        "экстрим": 3   # приравниваем к сложно
+    }
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("==="):
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3:
+            continue
+        category = parts[0]
+        difficulty_name = parts[1].lower()
+        text = parts[2]
+
+        difficulty = difficulty_map.get(difficulty_name, 2)
+        if difficulty > 3:
+            difficulty = 3
+
+        task = {
+            "id": len(tasks) + 1,
+            "category": category,
+            "difficulty": difficulty,
+            "text": text,
+            "answer": [],
+            "hints": [],
+            "explanation": "",
+            "reward": 5 + difficulty * 2,
+            "time_limit": 60 + difficulty * 30
+        }
+        tasks.append(task)
+
+    if not tasks:
+        print("В файле не найдено заданий. Использую тестовые.")
+        return generate_default_tasks()
+    return tasks
 
 
 TASKS = load_tasks()
-
-
 NO_CATEGORY = "Без категории"
 
+
+# ---------- РАБОТА С ЗАДАНИЯМИ ----------
 def get_task_category(task):
     if isinstance(task, dict):
         return task.get("category", NO_CATEGORY) or NO_CATEGORY
@@ -243,17 +271,24 @@ def format_task_history(history):
     return text
 
 
+# ---------- КЛАВИАТУРЫ ----------
 def categories_keyboard(user_categories):
     all_cats = get_all_categories()
     keyboard = []
-    for cat in all_cats:
+    row = []
+    for i, cat in enumerate(all_cats):
         checked = "✅" if cat in user_categories else "⬜"
         emoji = CATEGORY_EMOJIS.get(cat, "📂")
         btn = InlineKeyboardButton(
-            text=f"{checked} {emoji} {cat.capitalize()}",
+            text=f"{checked} {emoji} {cat}",
             callback_data=f"cat_{cat}"
         )
-        keyboard.append([btn])
+        row.append(btn)
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
     keyboard.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="cat_save")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -279,17 +314,18 @@ def get_main_keyboard():
     return keyboard
 
 
+# ---------- ОБРАБОТЧИКИ КОМАНД ----------
 async def cmd_start(message: types.Message):
     user = get_or_create_user(message.from_user)
     await message.answer(
-    f"🎉 *Добро пожаловать в TaskBot!*\n\n"
-    f"👋 Привет, {escape_markdown(user['name'])}!\n"
-    f"Я помогу тебе развиваться с помощью ежедневных заданий.\n\n"
-    f"🔹 Выполняй задания, получай очки и повышай уровень!\n"
-    f"🔹 Используй кнопки ниже для навигации.",
-    reply_markup=get_main_keyboard(),
-    parse_mode="Markdown"
-)
+        f"🎉 *Добро пожаловать в TaskBot!*\n\n"
+        f"👋 Привет, {escape_markdown(user['name'])}!\n"
+        f"Я помогу тебе развиваться с помощью ежедневных заданий.\n\n"
+        f"🔹 Выполняй задания, получай очки и повышай уровень!\n"
+        f"🔹 Используй кнопки ниже для навигации.",
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown"
+    )
     today_task = get_task_for_user(user)
     if today_task:
         user["current_task"] = today_task
@@ -459,9 +495,7 @@ async def cmd_help(message: types.Message):
     await message.answer(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
-DEFAULT_CATEGORY = "Без категории"
-
-# ---------- Вспомогательные функции (глобально) ----------
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ОТВЕТОВ ----------
 def get_level_up_msg(new_score: int, old_score: int) -> str:
     if new_score >= 200 > old_score:
         return "\n\n👑 *НОВЫЙ УРОВЕНЬ: ЛЕГЕНДА!* 👑"
@@ -470,6 +504,7 @@ def get_level_up_msg(new_score: int, old_score: int) -> str:
     elif new_score >= 50 > old_score:
         return "\n\n🔍 *НОВЫЙ УРОВЕНЬ: ИССЛЕДОВАТЕЛЬ!* 🔍"
     return ""
+
 
 def compose_success_response(reward: int, user: dict, explanation: str, level_up: str) -> str:
     res = f"{STATUS_EMOJIS['success']} *Отлично! Правильный ответ!*\n\n"
@@ -480,7 +515,8 @@ def compose_success_response(reward: int, user: dict, explanation: str, level_up
     res += level_up
     return res
 
-# ---------- Асинхронные обработчики ----------
+
+# ---------- АСИНХРОННЫЕ ОБРАБОТЧИКИ ОТВЕТОВ ----------
 async def process_correct_answer(user, current_task, message):
     reward = current_task.get("reward", 5)
     old_score = user["score"]
@@ -494,7 +530,8 @@ async def process_correct_answer(user, current_task, message):
     response = compose_success_response(reward, user, current_task.get("explanation", ""), level_up)
     await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
-async def process_incorrect_answer(user, current_task, message):   # <-- ОПРЕДЕЛЕНА ЗДЕСЬ
+
+async def process_incorrect_answer(user, current_task, message):
     hints = current_task.get("hints", [])
     used_hints = user.get("hint_index", 0)
     correct_answer = current_task["answer"][0] if current_task.get("answer") else ""
@@ -515,78 +552,6 @@ async def process_incorrect_answer(user, current_task, message):   # <-- ОПР�
             response += "💡 Подсказки закончились!\nПопробуй еще раз или используй /start для нового задания"
     await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
-async def handle_dict_task(user, current_task, answer_text, message):
-    correct_answers = [ans.lower() for ans in current_task.get("answer", [])]
-    is_correct = any(answer_text == ans or ans in answer_text for ans in correct_answers)
-
-    if is_correct:
-        await process_correct_answer(user, current_task, message)
-    else:
-        await process_incorrect_answer(user, current_task, message)   # <-- ВЫЗОВ, ФУНКЦИЯ УЖЕ ОПРЕДЕЛЕНА
-
-async def handle_string_task(user, current_task, answer_text, message):
-    if any(p in answer_text for p in ("выполнено", "готово", "сделал")):
-        user["score"] += 1
-        user["tasks"].append(current_task)
-        user["current_task"] = None
-        save_users()
-        await message.answer(
-            f"{STATUS_EMOJIS['success']} *Поздравляю, {escape_markdown(user['name'])}!*\n\n"
-            f"Ты выполнил задание! 🎉\n"
-            f"⭐ Всего очков: {user['score']}",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
-        )
-    else:
-        await message.answer(
-            f"{STATUS_EMOJIS['info']} *Как отметить выполнение:*\n\n"
-            "Напиши одно из слов:\n"
-            f"{STATUS_EMOJIS['success']} выполнено\n"
-            f"{STATUS_EMOJIS['success']} готово\n"
-            f"{STATUS_EMOJIS['success']} сделал\n\n"
-            "Или дай правильный ответ на задание!",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
-        )
-
-# ---------- Главная функция handle_answer ----------
-async def handle_answer(message: types.Message):
-    user = get_or_create_user(message.from_user)
-    current_task = user.get("current_task")
-
-    if not current_task:
-        await message.answer(
-            "🤔 У тебя нет активного задания.\n"
-            "Используй /start чтобы получить новое!",
-            reply_markup=get_main_keyboard()
-        )
-        return
-
-    answer_text = message.text.lower().strip()
-
-    if isinstance(current_task, dict):
-        await handle_dict_task(user, current_task, answer_text, message)
-    else:
-        await handle_string_task(user, current_task, answer_text, message)
-
-async def handle_answer(message: types.Message):
-    user = get_or_create_user(message.from_user)
-    current_task = user.get("current_task")
-
-    if not current_task:
-        await message.answer(
-            "🤔 У тебя нет активного задания.\n"
-            "Используй /start чтобы получить новое!",
-            reply_markup=get_main_keyboard()
-        )
-        return
-
-    answer_text = message.text.lower().strip()
-
-    if isinstance(current_task, dict):
-        await handle_dict_task(user, current_task, answer_text, message)
-    else:
-        await handle_string_task(user, current_task, answer_text, message)
 
 async def handle_dict_task(user, current_task, answer_text, message):
     correct_answers = [ans.lower() for ans in current_task.get("answer", [])]
@@ -597,18 +562,6 @@ async def handle_dict_task(user, current_task, answer_text, message):
     else:
         await process_incorrect_answer(user, current_task, message)
 
-async def process_correct_answer(user, current_task, message):
-    reward = current_task.get("reward", 5)
-    old_score = user["score"]
-    user["score"] += reward
-    user["tasks"].append(current_task.get("id", current_task))
-    user["current_task"] = None
-    user["hint_index"] = 0
-    save_users()
-
-    level_up = get_level_up_msg(user["score"], old_score)
-    response = compose_success_response(reward, user, current_task.get("explanation", ""), level_up)
-    await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 async def handle_string_task(user, current_task, answer_text, message):
     if any(p in answer_text for p in ("выполнено", "готово", "сделал")):
@@ -636,28 +589,27 @@ async def handle_string_task(user, current_task, answer_text, message):
         )
 
 
-def categories_keyboard(user_categories):
-    keyboard = []
-    row = []
-    for i, cat in enumerate(ALL_CATEGORIES):   # используем ваш глобальный список
-        checked = "✅" if cat in user_categories else "⬜"
-        emoji = CATEGORY_EMOJIS.get(cat, "📂")
-        btn = InlineKeyboardButton(
-            text=f"{checked} {emoji} {cat}",
-            callback_data=f"cat_{cat}"
-        )
-        row.append(btn)
-        # Каждые 3 кнопки добавляем как строку
-        if len(row) == 3:
-            keyboard.append(row)
-            row = []
-    # Добавляем оставшиеся кнопки, если есть
-    if row:
-        keyboard.append(row)
-    # Кнопка "Сохранить" на отдельной строке
-    keyboard.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="cat_save")])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+async def handle_answer(message: types.Message):
+    user = get_or_create_user(message.from_user)
+    current_task = user.get("current_task")
 
+    if not current_task:
+        await message.answer(
+            "🤔 У тебя нет активного задания.\n"
+            "Используй /start чтобы получить новое!",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    answer_text = message.text.lower().strip()
+
+    if isinstance(current_task, dict):
+        await handle_dict_task(user, current_task, answer_text, message)
+    else:
+        await handle_string_task(user, current_task, answer_text, message)
+
+
+# ---------- ОБРАБОТЧИКИ ИНЛАЙН КНОПОК ----------
 async def show_categories(callback: types.CallbackQuery):
     user = get_or_create_user(callback.from_user)
     selected = user.get("selected_categories", [])
@@ -668,6 +620,7 @@ async def show_categories(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
     await callback.answer()
+
 
 async def categories_callback(callback: types.CallbackQuery):
     user = get_or_create_user(callback.from_user)
@@ -713,6 +666,7 @@ async def handle_callback(callback: types.CallbackQuery):
         await categories_callback(callback)
 
 
+# ---------- ЗАПУСК БОТА ----------
 async def main():
     global users
     users = load_users()

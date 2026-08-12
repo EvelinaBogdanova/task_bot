@@ -8,6 +8,30 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# Вспомогательные функции для форматирования ответов
+def get_level_up_msg(new_score: int, old_score: int) -> str:
+    if new_score >= 200 > old_score:
+        return "\n\n👑 *НОВЫЙ УРОВЕНЬ: ЛЕГЕНДА!* 👑"
+    elif new_score >= 100 > old_score:
+        return "\n\n⭐ *НОВЫЙ УРОВЕНЬ: МАСТЕР!* ⭐"
+    elif new_score >= 50 > old_score:
+        return "\n\n🔍 *НОВЫЙ УРОВЕНЬ: ИССЛЕДОВАТЕЛЬ!* 🔍"
+    return ""
+
+def compose_success_response(reward: int, user: dict, explanation: str, level_up: str) -> str:
+    res = f"{STATUS_EMOJIS['success']} *Отлично! Правильный ответ!*\n\n"
+    res += f"➕ +{reward} очков\n"
+    res += f"⭐ Всего очков: {user['score']}\n"
+    if explanation:
+        res += f"\n📖 *Объяснение:* {explanation}\n"
+    res += level_up
+    return res
+
+def escape_markdown(text: str) -> str:
+    """Экранирует спецсимволы для Telegram Markdown (версия 1)."""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return ''.join(f'\\{c}' if c in escape_chars else c for c in text)
+
 CATEGORY_EMOJIS = {
     "riddles": "🧩",
     "logic": "🧠",
@@ -98,16 +122,24 @@ def load_tasks():
 TASKS = load_tasks()
 
 
+NO_CATEGORY = "Без категории"
+
 def get_task_category(task):
     if isinstance(task, dict):
-        return task.get("category") or "Без категории"
-    if isinstance(task, str) and "|" in task:
-        return task.split("|", 1)[0].strip() or "Без категории"
+        return task.get("category", NO_CATEGORY) or NO_CATEGORY
+    if isinstance(task, str):
+        if "|" in task:
+            category = task.split("|", 1)[0].strip()
+            return category if category else NO_CATEGORY
+        else:
+            return NO_CATEGORY
     if isinstance(task, int):
         task_obj = next((item for item in TASKS if isinstance(item, dict) and item.get("id") == task), None)
         if task_obj:
-            return task_obj.get("category") or "Без категории"
-    return "Без категории"
+            return task_obj.get("category", NO_CATEGORY) or NO_CATEGORY
+        else:
+            return NO_CATEGORY
+    return NO_CATEGORY
 
 
 def get_all_categories():
@@ -155,7 +187,7 @@ def format_task(task):
 
 
 def format_user_stats(user):
-    name = user.get("name", "Пользователь")
+    name = escape_markdown(user.get("name", "Пользователь"))
     score = user.get("score", 0)
     tasks_count = len(user.get("tasks", []))
     if score >= 200:
@@ -242,14 +274,14 @@ def get_main_keyboard():
 async def cmd_start(message: types.Message):
     user = get_or_create_user(message.from_user)
     await message.answer(
-        f"🎉 *Добро пожаловать в TaskBot!*\n\n"
-        f"👋 Привет, {user['name']}!\n"
-        f"Я помогу тебе развиваться с помощью ежедневных заданий.\n\n"
-        f"🔹 Выполняй задания, получай очки и повышай уровень!\n"
-        f"🔹 Используй кнопки ниже для навигации.",
-        reply_markup=get_main_keyboard(),
-        parse_mode="Markdown"
-    )
+    f"🎉 *Добро пожаловать в TaskBot!*\n\n"
+    f"👋 Привет, {escape_markdown(user['name'])}!\n"
+    f"Я помогу тебе развиваться с помощью ежедневных заданий.\n\n"
+    f"🔹 Выполняй задания, получай очки и повышай уровень!\n"
+    f"🔹 Используй кнопки ниже для навигации.",
+    reply_markup=get_main_keyboard(),
+    parse_mode="Markdown"
+)
     today_task = get_task_for_user(user)
     if today_task:
         user["current_task"] = today_task
@@ -297,7 +329,7 @@ async def cmd_leaderboard(message: types.Message):
     medals = ["🥇", "🥈", "🥉"]
     for i, user_item in enumerate(sorted_users, 1):
         medal = medals[i - 1] if i <= 3 else f"{i}."
-        name = user_item.get("name", "Аноним")
+        name = escape_markdown(user_item.get("name", "Аноним"))
         score = user_item.get("score", 0)
         if score >= 200:
             level_emoji = "👑"
@@ -419,9 +451,101 @@ async def cmd_help(message: types.Message):
     await message.answer(help_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 
+DEFAULT_CATEGORY = "Без категории"
+
+# ---------- Вспомогательные функции (глобально) ----------
+def get_level_up_msg(new_score: int, old_score: int) -> str:
+    if new_score >= 200 > old_score:
+        return "\n\n👑 *НОВЫЙ УРОВЕНЬ: ЛЕГЕНДА!* 👑"
+    elif new_score >= 100 > old_score:
+        return "\n\n⭐ *НОВЫЙ УРОВЕНЬ: МАСТЕР!* ⭐"
+    elif new_score >= 50 > old_score:
+        return "\n\n🔍 *НОВЫЙ УРОВЕНЬ: ИССЛЕДОВАТЕЛЬ!* 🔍"
+    return ""
+
+def compose_success_response(reward: int, user: dict, explanation: str, level_up: str) -> str:
+    res = f"{STATUS_EMOJIS['success']} *Отлично! Правильный ответ!*\n\n"
+    res += f"➕ +{reward} очков\n"
+    res += f"⭐ Всего очков: {user['score']}\n"
+    if explanation:
+        res += f"\n📖 *Объяснение:* {explanation}\n"
+    res += level_up
+    return res
+
+# ---------- Асинхронные обработчики ----------
+async def process_correct_answer(user, current_task, message):
+    reward = current_task.get("reward", 5)
+    old_score = user["score"]
+    user["score"] += reward
+    user["tasks"].append(current_task.get("id", current_task))
+    user["current_task"] = None
+    user["hint_index"] = 0
+    save_users()
+
+    level_up = get_level_up_msg(user["score"], old_score)
+    response = compose_success_response(reward, user, current_task.get("explanation", ""), level_up)
+    await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+async def process_incorrect_answer(user, current_task, message):   # <-- ОПРЕДЕЛЕНА ЗДЕСЬ
+    hints = current_task.get("hints", [])
+    used_hints = user.get("hint_index", 0)
+    correct_answer = current_task["answer"][0] if current_task.get("answer") else ""
+
+    remaining_hints = len(hints) - used_hints
+    if remaining_hints <= 0 and hints:
+        response = (f"{STATUS_EMOJIS['warning']} *Неправильно!*\n\n"
+                    f"💡 Вот правильный ответ:\n`{correct_answer}`\n\n"
+                    "Попробуй следующее задание через /start")
+        user["current_task"] = None
+        user["hint_index"] = 0
+        save_users()
+    else:
+        response = f"{STATUS_EMOJIS['error']} *Неправильно!*\n\n"
+        if remaining_hints > 0:
+            response += f"💡 Осталось подсказок: {remaining_hints}\nИспользуй кнопку '💡 Подсказка'"
+        else:
+            response += "💡 Подсказки закончились!\nПопробуй еще раз или используй /start для нового задания"
+    await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+async def handle_dict_task(user, current_task, answer_text, message):
+    correct_answers = [ans.lower() for ans in current_task.get("answer", [])]
+    is_correct = any(answer_text == ans or ans in answer_text for ans in correct_answers)
+
+    if is_correct:
+        await process_correct_answer(user, current_task, message)
+    else:
+        await process_incorrect_answer(user, current_task, message)   # <-- ВЫЗОВ, ФУНКЦИЯ УЖЕ ОПРЕДЕЛЕНА
+
+async def handle_string_task(user, current_task, answer_text, message):
+    if any(p in answer_text for p in ("выполнено", "готово", "сделал")):
+        user["score"] += 1
+        user["tasks"].append(current_task)
+        user["current_task"] = None
+        save_users()
+        await message.answer(
+            f"{STATUS_EMOJIS['success']} *Поздравляю, {escape_markdown(user['name'])}!*\n\n"
+            f"Ты выполнил задание! 🎉\n"
+            f"⭐ Всего очков: {user['score']}",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        await message.answer(
+            f"{STATUS_EMOJIS['info']} *Как отметить выполнение:*\n\n"
+            "Напиши одно из слов:\n"
+            f"{STATUS_EMOJIS['success']} выполнено\n"
+            f"{STATUS_EMOJIS['success']} готово\n"
+            f"{STATUS_EMOJIS['success']} сделал\n\n"
+            "Или дай правильный ответ на задание!",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+
+# ---------- Главная функция handle_answer ----------
 async def handle_answer(message: types.Message):
     user = get_or_create_user(message.from_user)
     current_task = user.get("current_task")
+
     if not current_task:
         await message.answer(
             "🤔 У тебя нет активного задания.\n"
@@ -429,77 +553,79 @@ async def handle_answer(message: types.Message):
             reply_markup=get_main_keyboard()
         )
         return
+
     answer_text = message.text.lower().strip()
-    if isinstance(current_task, dict) and "answer" in current_task:
-        correct_answers = [ans.lower() for ans in current_task["answer"]]
-        if any(answer_text == ans or ans in answer_text for ans in correct_answers):
-            reward = current_task.get("reward", 5)
-            old_score = user["score"]
-            user["score"] += reward
-            user["tasks"].append(current_task.get("id", current_task))
-            user["current_task"] = None
-            user["hint_index"] = 0
-            save_users()
-            level_up = ""
-            if user["score"] >= 200 and old_score < 200:
-                level_up = "\n\n👑 *НОВЫЙ УРОВЕНЬ: ЛЕГЕНДА!* 👑"
-            elif user["score"] >= 100 and old_score < 100:
-                level_up = "\n\n⭐ *НОВЫЙ УРОВЕНЬ: МАСТЕР!* ⭐"
-            elif user["score"] >= 50 and old_score < 50:
-                level_up = "\n\n🔍 *НОВЫЙ УРОВЕНЬ: ИССЛЕДОВАТЕЛЬ!* 🔍"
-            explanation = current_task.get("explanation", "")
-            response = f"{STATUS_EMOJIS['success']} *Отлично! Правильный ответ!*\n\n"
-            response += f"➕ +{reward} очков\n"
-            response += f"⭐ Всего очков: {user['score']}\n"
-            if explanation:
-                response += f"\n📖 *Объяснение:* {explanation}\n"
-            response += level_up
-            await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
-        else:
-            hints = current_task.get("hints", [])
-            used_hints = user.get("hint_index", 0)
-            remaining_hints = len(hints) - used_hints
-            if remaining_hints <= 0 and hints:
-                response = f"{STATUS_EMOJIS['warning']} *Неправильно!*\n\n"
-                response += "💡 Вот правильный ответ:\n"
-                response += f"`{current_task['answer'][0]}`\n\n"
-                response += "Попробуй следующее задание через /start"
-                user["current_task"] = None
-                user["hint_index"] = 0
-                save_users()
-            else:
-                response = f"{STATUS_EMOJIS['error']} *Неправильно!*\n\n"
-                if remaining_hints > 0:
-                    response += f"💡 Осталось подсказок: {remaining_hints}\n"
-                    response += "Используй кнопку '💡 Подсказка'"
-                else:
-                    response += "💡 Подсказки закончились!\n"
-                    response += "Попробуй еще раз или используй /start для нового задания"
-            await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+    if isinstance(current_task, dict):
+        await handle_dict_task(user, current_task, answer_text, message)
     else:
-        if "выполнено" in answer_text or "готово" in answer_text or "сделал" in answer_text:
-            user["score"] += 1
-            user["tasks"].append(current_task)
-            user["current_task"] = None
-            save_users()
-            await message.answer(
-                f"{STATUS_EMOJIS['success']} *Поздравляю, {user['name']}!*\n\n"
-                f"Ты выполнил задание! 🎉\n"
-                f"⭐ Всего очков: {user['score']}",
-                parse_mode="Markdown",
-                reply_markup=get_main_keyboard()
-            )
-        else:
-            await message.answer(
-                f"{STATUS_EMOJIS['info']} *Как отметить выполнение:*\n\n"
-                "Напиши одно из слов:\n"
-                f"{STATUS_EMOJIS['success']} выполнено\n"
-                f"{STATUS_EMOJIS['success']} готово\n"
-                f"{STATUS_EMOJIS['success']} сделал\n\n"
-                "Или дай правильный ответ на задание!",
-                parse_mode="Markdown",
-                reply_markup=get_main_keyboard()
-            )
+        await handle_string_task(user, current_task, answer_text, message)
+
+async def handle_answer(message: types.Message):
+    user = get_or_create_user(message.from_user)
+    current_task = user.get("current_task")
+
+    if not current_task:
+        await message.answer(
+            "🤔 У тебя нет активного задания.\n"
+            "Используй /start чтобы получить новое!",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    answer_text = message.text.lower().strip()
+
+    if isinstance(current_task, dict):
+        await handle_dict_task(user, current_task, answer_text, message)
+    else:
+        await handle_string_task(user, current_task, answer_text, message)
+
+async def handle_dict_task(user, current_task, answer_text, message):
+    correct_answers = [ans.lower() for ans in current_task.get("answer", [])]
+    is_correct = any(answer_text == ans or ans in answer_text for ans in correct_answers)
+
+    if is_correct:
+        await process_correct_answer(user, current_task, message)
+    else:
+        await process_incorrect_answer(user, current_task, message)
+
+async def process_correct_answer(user, current_task, message):
+    reward = current_task.get("reward", 5)
+    old_score = user["score"]
+    user["score"] += reward
+    user["tasks"].append(current_task.get("id", current_task))
+    user["current_task"] = None
+    user["hint_index"] = 0
+    save_users()
+
+    level_up = get_level_up_msg(user["score"], old_score)
+    response = compose_success_response(reward, user, current_task.get("explanation", ""), level_up)
+    await message.answer(response, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+async def handle_string_task(user, current_task, answer_text, message):
+    if any(p in answer_text for p in ("выполнено", "готово", "сделал")):
+        user["score"] += 1
+        user["tasks"].append(current_task)
+        user["current_task"] = None
+        save_users()
+        await message.answer(
+            f"{STATUS_EMOJIS['success']} *Поздравляю, {escape_markdown(user['name'])}!*\n\n"
+            f"Ты выполнил задание! 🎉\n"
+            f"⭐ Всего очков: {user['score']}",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        await message.answer(
+            f"{STATUS_EMOJIS['info']} *Как отметить выполнение:*\n\n"
+            "Напиши одно из слов:\n"
+            f"{STATUS_EMOJIS['success']} выполнено\n"
+            f"{STATUS_EMOJIS['success']} готово\n"
+            f"{STATUS_EMOJIS['success']} сделал\n\n"
+            "Или дай правильный ответ на задание!",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
 
 
 async def show_categories(callback: types.CallbackQuery):

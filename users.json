@@ -8,5 +8,15 @@
     "last_bonus": null,
     "selected_categories": [],
     "hint_index": 0
+  },
+  "8803174834": {
+    "id": 8803174834,
+    "name": "task_111100bot",
+    "score": 12,
+    "tasks": [],
+    "current_task": null,
+    "last_bonus": "2026-08-12",
+    "selected_categories": [],
+    "hint_index": 0
   }
 }

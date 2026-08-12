@@ -2,19 +2,21 @@
   "7536082193": {
     "id": 7536082193,
     "name": "user_7536082193",
-    "score": 0,
-    "tasks": [],
-    "current_task": {
-      "id": 66,
-      "category": "Социальное",
-      "difficulty": 1,
-      "text": "Написать благодарность человеку, который вам помог",
-      "answer": [],
-      "hints": [],
-      "explanation": "",
-      "reward": 7,
-      "time_limit": 90
-    },
+    "score": 1,
+    "tasks": [
+      {
+        "id": 66,
+        "category": "Социальное",
+        "difficulty": 1,
+        "text": "Написать благодарность человеку, который вам помог",
+        "answer": [],
+        "hints": [],
+        "explanation": "",
+        "reward": 7,
+        "time_limit": 90
+      }
+    ],
+    "current_task": null,
     "last_bonus": null,
     "selected_categories": [
       "Творчество",

@@ -554,6 +554,22 @@ async def process_incorrect_answer(user, current_task, message):
 
 
 async def handle_dict_task(user, current_task, answer_text, message):
+    # Сначала проверяем ключевые слова для отметки выполнения
+    if any(p in answer_text for p in ("выполнено", "готово", "сделал")):
+        user["score"] += 1
+        user["tasks"].append(current_task)
+        user["current_task"] = None
+        save_users()
+        await message.answer(
+            f"{STATUS_EMOJIS['success']} *Поздравляю, {escape_markdown(user['name'])}!*\n\n"
+            f"Ты выполнил задание! 🎉\n"
+            f"⭐ Всего очков: {user['score']}",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    # Если не ключевое слово — проверяем правильный ответ
     correct_answers = [ans.lower() for ans in current_task.get("answer", [])]
     is_correct = any(answer_text == ans or ans in answer_text for ans in correct_answers)
 
@@ -564,6 +580,7 @@ async def handle_dict_task(user, current_task, answer_text, message):
 
 
 async def handle_string_task(user, current_task, answer_text, message):
+    # Обработка заданий без ответа — только по ключевым словам
     if any(p in answer_text for p in ("выполнено", "готово", "сделал")):
         user["score"] += 1
         user["tasks"].append(current_task)
@@ -603,9 +620,11 @@ async def handle_answer(message: types.Message):
 
     answer_text = message.text.lower().strip()
 
-    if isinstance(current_task, dict):
+    # Если задание имеет ответы (непустой список), используем проверку ответов
+    if isinstance(current_task, dict) and current_task.get("answer"):
         await handle_dict_task(user, current_task, answer_text, message)
     else:
+        # Иначе используем обработку свободного задания (только ключевые слова)
         await handle_string_task(user, current_task, answer_text, message)
 
 
